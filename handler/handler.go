@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -64,12 +66,52 @@ func UploadSucHandler(w http.ResponseWriter, r *http.Request) {
 
 func GetFileMetaHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	filehash := r.Form["filehash"][0]
-	fMeta := meta.GetFileMeta(filehash)
-	bytes, err := json.Marshal(fMeta)
+	filehash := r.Form["filehash"][0] // same as r.Form.Get("filehash")
+	if fMeta, ok := meta.GetFileMeta(filehash); ok {
+		bytes, err := json.Marshal(fMeta)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		io.WriteString(w, string(bytes))
+	} else {
+		io.WriteString(w, "Cannot find file meta!")
+	}
+}
+
+func FileQueryHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	limitCount, _ := strconv.Atoi(r.Form.Get("limit"))
+	fileMetas := meta.GetLatestFileMetas(limitCount)
+	bytes, err := json.Marshal(fileMetas)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.Write(bytes)
+	io.WriteString(w, string(bytes))
+}
+
+func DownloadHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	filehash := r.Form.Get("filehash")
+	fileMeta, ok := meta.GetFileMeta(filehash)
+	if ok {
+		file, err := os.Open(fileMeta.Location)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("cannot find file at path: %s", fileMeta.Location)
+			return
+		}
+		defer file.Close()
+		data, err := ioutil.ReadAll(file)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("cannot read file at path: %s, err:%s", fileMeta.Location, err.Error())
+			return
+		}
+		w.Header().Set("Content-Disposition", "attachment;filename=\""+fileMeta.FileName+"\"")
+		w.Write(data)
+	} else {
+		io.WriteString(w, "File not found!")
+	}
 }
